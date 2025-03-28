@@ -6,6 +6,7 @@ use midir::MidiInputConnection;
 use crate::audio::play_sine_wave;
 use crate::midi::setup_midi_callback;
 use crate::unison::UnisonManager;
+use crate::oscillator::Waveform;
 
 /// アプリの状態を表す構造体
 pub struct SynthApp {
@@ -130,6 +131,28 @@ impl App for SynthApp {
                 }
                 self.freq = 0.0;
             }
+
+            // 波形選択UI
+            ui.separator();
+            ui.heading("Oscillator Settings");
+            
+            // 波形選択コンボボックス
+            let mut current_waveform = if let Ok(settings) = self.unison_manager.get_settings().lock() {
+                settings.waveform
+            } else {
+                Waveform::Sine
+            };
+            
+            egui::ComboBox::from_label("Waveform")
+                .selected_text(format!("{:?}", current_waveform))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut current_waveform, Waveform::Sine, "Sine");
+                    ui.selectable_value(&mut current_waveform, Waveform::Triangle, "Triangle");
+                    ui.selectable_value(&mut current_waveform, Waveform::Square, "Square");
+                    ui.selectable_value(&mut current_waveform, Waveform::Sawtooth, "Sawtooth");
+                });
+            
+            self.unison_manager.set_waveform(current_waveform);
 
             // Unison設定UI
             ui.separator();

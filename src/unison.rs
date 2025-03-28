@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
-use std::f32::consts::PI;
+
+use crate::oscillator::{Waveform, generate_waveform};
 
 /// Unisonの設定を表す構造体
 #[derive(Clone, Copy)]
@@ -8,6 +9,8 @@ pub struct UnisonSettings {
     pub voices: u8,
     /// デチューン量（0から100セント）
     pub detune: f32,
+    /// 波形タイプ
+    pub waveform: Waveform,
 }
 
 impl Default for UnisonSettings {
@@ -15,6 +18,7 @@ impl Default for UnisonSettings {
         Self {
             voices: 1,
             detune: 0.0,
+            waveform: Waveform::Sine,
         }
     }
 }
@@ -33,9 +37,9 @@ pub fn generate_unison(
     let mut sum = 0.0;
     let voice_count = settings.voices as f32;
     
-    // ボイス数が1の場合は通常のサイン波を生成
+    // ボイス数が1の場合は通常の波形を生成
     if settings.voices == 1 {
-        return (2.0 * PI * base_freq * t).sin();
+        return generate_waveform(settings.waveform, base_freq, t);
     }
     
     // 各ボイスを生成
@@ -50,8 +54,8 @@ pub fn generate_unison(
         // このボイスの周波数を計算
         let freq = base_freq * detune_ratio;
         
-        // サイン波を生成
-        let value = (2.0 * PI * freq * t).sin();
+        // 波形を生成
+        let value = generate_waveform(settings.waveform, freq, t);
         
         // 音量を調整（ボイス数で割って音量を一定に保つ）
         sum += value / voice_count;
@@ -85,6 +89,12 @@ impl UnisonManager {
     pub fn set_detune(&self, detune: f32) {
         if let Ok(mut settings) = self.settings.lock() {
             settings.detune = detune.clamp(0.0, 100.0);
+        }
+    }
+
+    pub fn set_waveform(&self, waveform: Waveform) {
+        if let Ok(mut settings) = self.settings.lock() {
+            settings.waveform = waveform;
         }
     }
 } 
