@@ -10,6 +10,9 @@ cpal = "0.15"
 eframe = { version = "0.24.1", default-features = false, features = ["glow", "accesskit"] }
 egui = "0.24.1"
 
+# MIDI関連
+midir = "0.9"
+
 # Windows専用の winapi features をここで明示的に指定
 [target.'cfg(windows)'.dependencies.winapi]
 version = "0.3.9"
