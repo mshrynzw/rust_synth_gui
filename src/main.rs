@@ -1,3 +1,7 @@
+mod app;
+mod audio;
+mod midi;
+
 // 標準ライブラリから、円周率（PI）を使用
 use std::f32::consts::PI;
 
@@ -13,10 +17,12 @@ use eframe::{egui, App};
 // MIDI関連のインポート
 use midir::{MidiInput, MidiInputConnection};
 
+use eframe::NativeOptions;
+
 /// アプリケーションのエントリーポイント（GUIの初期化）
 fn main() -> Result<(), eframe::Error> {
     // ウィンドウ設定を定義（タイトルとウィンドウサイズ）
-    let options = eframe::NativeOptions {
+    let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([300.0, 200.0])  // ウィンドウの初期サイズ
             .with_title("Rust Synth"),        // ウィンドウタイトル
@@ -27,7 +33,7 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Rust Synth", // 内部的なアプリ名
         options,      // ウィンドウ設定
-        Box::new(|_cc| Box::new(SynthApp::default())), // アプリケーションの初期化クロージャ
+        Box::new(|_cc| Box::new(app::SynthApp::default())), // アプリケーションの初期化クロージャ
     )
 }
 
