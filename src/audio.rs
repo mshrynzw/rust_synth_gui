@@ -1,9 +1,10 @@
-use std::f32::consts::PI;
 use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::unison::{UnisonManager, generate_unison};
+
 /// サイン波を生成してスピーカーから再生する関数
-pub fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>) -> cpal::Stream {
+pub fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>, unison_manager: Arc<UnisonManager>) -> cpal::Stream {
     // デフォルトのオーディオホストを取得（WindowsならWASAPIなど）
     let host = cpal::default_host();
 
@@ -23,6 +24,9 @@ pub fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>) -> cpal::Stream
     // current_freqのクローンを作成
     let current_freq_clone = Arc::clone(&current_freq);
 
+    // Unison設定のクローンを作成
+    let unison_settings = unison_manager.get_settings();
+
     // build_output_stream にクロージャを直接渡すことでライフタイムエラーを回避
     let stream = device
         .build_output_stream(
@@ -34,14 +38,25 @@ pub fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>) -> cpal::Stream
                 let freq = if let Ok(freq_lock) = current_freq_clone.lock() {
                     *freq_lock
                 } else {
-                    440.0 // デフォルト周波数
+                    0.0 // デフォルト周波数（音なし）
+                };
+
+                // Unison設定を取得
+                let settings = if let Ok(settings) = unison_settings.lock() {
+                    *settings
+                } else {
+                    Default::default()
                 };
 
                 // 出力バッファにサンプルを書き込む
                 for sample in data.iter_mut() {
-                    // サイン波の式 sin(2πft)
-                    let value = (2.0 * PI * freq * *t).sin() * 0.2; // 0.2 = 音量
-                    *sample = value; // バッファに書き込む
+                    if freq > 0.0 {
+                        // Unison音声を生成
+                        let value = generate_unison(freq, settings, *t, sample_rate);
+                        *sample = value * 0.2; // 0.2 = 音量
+                    } else {
+                        *sample = 0.0; // 音なし
+                    }
                     *t += 1.0 / sample_rate; // 時間を進める
                 }
             },

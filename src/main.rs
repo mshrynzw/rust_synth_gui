@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod midi;
+mod unison;
 
 // 標準ライブラリから、円周率（PI）を使用
 use std::f32::consts::PI;

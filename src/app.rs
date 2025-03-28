@@ -5,11 +5,11 @@ use midir::MidiInputConnection;
 
 use crate::audio::play_sine_wave;
 use crate::midi::setup_midi_callback;
+use crate::unison::UnisonManager;
 
 /// アプリの状態を表す構造体
 pub struct SynthApp {
     freq: f32, // 再生する周波数（Hz）
-    playing: bool, // 音を再生中かどうかのフラグ
     stream_handle: Option<Stream>, // 再生中のストリーム（再生停止に使う）
     midi_connection: Option<MidiInputConnection<()>>, // MIDI接続ハンドル
     last_note: Option<u8>, // 最後に押されたノート番号
@@ -17,21 +17,22 @@ pub struct SynthApp {
     current_freq: Arc<Mutex<f32>>, // 現在再生中の周波数（スレッド間共有）
     midi_ports: Vec<String>, // 利用可能なMIDIポートのリスト
     selected_port: usize, // 選択されたMIDIポートのインデックス
+    unison_manager: Arc<UnisonManager>, // Unison設定の管理
 }
 
 /// アプリのデフォルト初期値を定義（440Hz・再生停止中）
 impl Default for SynthApp {
     fn default() -> Self {
         Self {
-            freq: 440.0,         // A4（ラ）の周波数
-            playing: false,      // 初期状態は再生停止中
+            freq: 0.0,          // 初期周波数は0（音なし）
             stream_handle: None, // ストリームはまだ存在しない
             midi_connection: None, // MIDI接続はまだ存在しない
             last_note: None,     // 最後に押されたノートはまだない
-            midi_freq: Arc::new(Mutex::new(440.0)), // MIDI周波数の初期値
-            current_freq: Arc::new(Mutex::new(440.0)), // 現在の周波数の初期値
+            midi_freq: Arc::new(Mutex::new(0.0)), // MIDI周波数の初期値（音なし）
+            current_freq: Arc::new(Mutex::new(0.0)), // 現在の周波数の初期値（音なし）
             midi_ports: Vec::new(), // MIDIポートのリストは空
             selected_port: 0,    // デフォルトは最初のポート
+            unison_manager: Arc::new(UnisonManager::new()), // Unison設定の初期化
         }
     }
 }
@@ -98,6 +99,10 @@ impl App for SynthApp {
                         if let Ok(conn) = setup_midi_callback(midi_in, port, current_freq) {
                             println!("MIDI connection established successfully");
                             self.midi_connection = Some(conn);
+                            
+                            // オーディオストリームを開始（初期周波数は0で音なし）
+                            let stream = play_sine_wave(0.0, Arc::clone(&self.current_freq), Arc::clone(&self.unison_manager));
+                            self.stream_handle = Some(stream);
                         } else {
                             println!("Failed to establish MIDI connection");
                         }
@@ -111,11 +116,45 @@ impl App for SynthApp {
 
             // MIDI切断ボタン
             if ui.button("🔌 Disconnect MIDI").clicked() && self.midi_connection.is_some() {
+                // 音声ストリームを停止
+                self.stream_handle = None;
+                // MIDI接続を切断
                 self.midi_connection = None;
                 self.last_note = None;
+                // 周波数を0に設定
+                if let Ok(mut freq_lock) = self.current_freq.lock() {
+                    *freq_lock = 0.0;
+                }
+                if let Ok(mut freq_lock) = self.midi_freq.lock() {
+                    *freq_lock = 0.0;
+                }
+                self.freq = 0.0;
             }
 
+            // Unison設定UI
+            ui.separator();
+            ui.heading("Unison Settings");
+            
+            // Unisonボイス数のスライダー（1-8）
+            let mut voices = if let Ok(settings) = self.unison_manager.get_settings().lock() {
+                settings.voices
+            } else {
+                1
+            };
+            ui.add(egui::Slider::new(&mut voices, 1..=8).text("Unison Voices"));
+            self.unison_manager.set_voices(voices);
+            
+            // デチューン量のスライダー（0から100セント）
+            let mut detune = if let Ok(settings) = self.unison_manager.get_settings().lock() {
+                settings.detune
+            } else {
+                0.0
+            };
+            ui.add(egui::Slider::new(&mut detune, 0.0..=100.0).text("Detune (cents)"));
+            self.unison_manager.set_detune(detune);
+
             // 周波数スライダー（100Hz〜1000Hz）を追加
+            ui.separator();
             ui.add(
                 egui::Slider::new(&mut self.freq, 100.0..=1000.0)
                     .text("Frequency (Hz)"),
@@ -125,27 +164,22 @@ impl App for SynthApp {
                 *current_freq = self.freq;
             }
 
-            // 再生・停止ボタンを横並びで表示
-            ui.horizontal(|ui| {
-                // ▶ 再生ボタンが押された & 現在停止中なら
-                if ui.button("▶ Play").clicked() && !self.playing {
-                    self.playing = true; // 再生状態に変更
-                    let freq = self.freq; // 現在の周波数をコピー
-
-                    // サイン波を再生してストリームを保持（current_freqを渡す）
-                    let stream = play_sine_wave(freq, Arc::clone(&self.current_freq));
-                    self.stream_handle = Some(stream);
-                }
-
-                // ⏹ 停止ボタンが押された & 再生中なら
-                if ui.button("⏹ Stop").clicked() && self.playing {
-                    self.playing = false;      // 停止状態に変更
-                    self.stream_handle = None; // ストリームを破棄（再生停止）
-                }
-            });
-
             // 現在の周波数をラベルとして表示
             ui.label(format!("Current frequency: {:.1} Hz", self.freq));
         });
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // アプリケーション終了時のクリーンアップ
+        self.stream_handle = None;
+        self.midi_connection = None;
+        self.last_note = None;
+        if let Ok(mut freq_lock) = self.current_freq.lock() {
+            *freq_lock = 0.0;
+        }
+        if let Ok(mut freq_lock) = self.midi_freq.lock() {
+            *freq_lock = 0.0;
+        }
+        self.freq = 0.0;
     }
 } 
