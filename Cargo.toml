@@ -1,0 +1,19 @@
+[package]
+name = "rust_synth_gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpal = "0.15"
+
+# GUI関連
+eframe = { version = "0.24.1", default-features = false, features = ["glow", "accesskit"] }
+egui = "0.24.1"
+
+# Windows専用の winapi features をここで明示的に指定
+[target.'cfg(windows)'.dependencies.winapi]
+version = "0.3.9"
+features = [
+    "winuser",
+    "windef",
+]
