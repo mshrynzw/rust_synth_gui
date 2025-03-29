@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 use midir::{MidiInput, MidiInputConnection, MidiInputPort};
+use crate::envelope::Envelope;
 
 /// MIDIコールバックをセットアップする関数
 pub fn setup_midi_callback(
     midi_in: MidiInput,
     port: &MidiInputPort,
     current_freq: Arc<Mutex<f32>>,
+    envelope: Arc<Mutex<Envelope>>,
 ) -> Result<MidiInputConnection<()>, midir::ConnectError<MidiInput>> {
     // MIDIメッセージを処理するコールバック関数
     let callback = move |_stamp_ms: u64, message: &[u8], _: &mut ()| {
@@ -26,6 +28,11 @@ pub fn setup_midi_callback(
                 if let Ok(mut freq_lock) = current_freq.lock() {
                     *freq_lock = freq;
                 }
+
+                // エンベロープを開始
+                if let Ok(mut env) = envelope.lock() {
+                    env.start();
+                }
             }
             // Note Off メッセージ（0x80）または Note On with velocity 0 の場合
             else if status == 0x80 || (status == 0x90 && velocity == 0) {
@@ -33,6 +40,11 @@ pub fn setup_midi_callback(
                 // 周波数を0に設定（音を停止）
                 if let Ok(mut freq_lock) = current_freq.lock() {
                     *freq_lock = 0.0;
+                }
+
+                // エンベロープを終了
+                if let Ok(mut env) = envelope.lock() {
+                    env.end();
                 }
             }
         }

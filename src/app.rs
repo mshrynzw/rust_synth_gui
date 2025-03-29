@@ -7,6 +7,7 @@ use crate::audio::play_sine_wave;
 use crate::midi::setup_midi_callback;
 use crate::unison::UnisonManager;
 use crate::oscillator::Waveform;
+use crate::envelope::{Envelope, EnvelopeParams};
 
 /// アプリの状態を表す構造体
 pub struct SynthApp {
@@ -19,6 +20,7 @@ pub struct SynthApp {
     midi_ports: Vec<String>, // 利用可能なMIDIポートのリスト
     selected_port: usize, // 選択されたMIDIポートのインデックス
     unison_manager: Arc<UnisonManager>, // Unison設定の管理
+    envelope: Arc<Mutex<Envelope>>, // ADSRエンベロープ
 }
 
 /// アプリのデフォルト初期値を定義（440Hz・再生停止中）
@@ -34,6 +36,7 @@ impl Default for SynthApp {
             midi_ports: Vec::new(), // MIDIポートのリストは空
             selected_port: 0,    // デフォルトは最初のポート
             unison_manager: Arc::new(UnisonManager::new()), // Unison設定の初期化
+            envelope: Arc::new(Mutex::new(Envelope::new(EnvelopeParams::default(), 44100.0))), // エンベロープの初期化
         }
     }
 }
@@ -97,12 +100,18 @@ impl App for SynthApp {
                         
                         // MIDIコールバックをセットアップ
                         let current_freq = Arc::clone(&self.current_freq);
-                        if let Ok(conn) = setup_midi_callback(midi_in, port, current_freq) {
+                        let envelope = Arc::clone(&self.envelope);
+                        if let Ok(conn) = setup_midi_callback(midi_in, port, current_freq, envelope) {
                             println!("MIDI connection established successfully");
                             self.midi_connection = Some(conn);
                             
                             // オーディオストリームを開始（初期周波数は0で音なし）
-                            let stream = play_sine_wave(0.0, Arc::clone(&self.current_freq), Arc::clone(&self.unison_manager));
+                            let stream = play_sine_wave(
+                                0.0,
+                                Arc::clone(&self.current_freq),
+                                Arc::clone(&self.unison_manager),
+                                Arc::clone(&self.envelope),
+                            );
                             self.stream_handle = Some(stream);
                         } else {
                             println!("Failed to establish MIDI connection");
@@ -175,6 +184,29 @@ impl App for SynthApp {
             };
             ui.add(egui::Slider::new(&mut detune, 0.0..=100.0).text("Detune (cents)"));
             self.unison_manager.set_detune(detune);
+
+            // ADSRエンベロープ設定UI
+            ui.separator();
+            ui.heading("ADSR Envelope");
+            
+            if let Ok(mut envelope) = self.envelope.lock() {
+                let mut params = envelope.get_params();
+                
+                ui.add(egui::Slider::new(&mut params.attack, 0.001..=0.5)
+                    .text("Attack (ms)")
+                    .clamp_to_range(true));
+                ui.add(egui::Slider::new(&mut params.decay, 0.001..=0.5)
+                    .text("Decay (ms)")
+                    .clamp_to_range(true));
+                ui.add(egui::Slider::new(&mut params.sustain, 0.0..=1.0)
+                    .text("Sustain")
+                    .clamp_to_range(true));
+                ui.add(egui::Slider::new(&mut params.release, 0.001..=0.5)
+                    .text("Release (ms)")
+                    .clamp_to_range(true));
+
+                envelope.set_params(params);
+            }
 
             // 周波数スライダー（100Hz〜1000Hz）を追加
             ui.separator();

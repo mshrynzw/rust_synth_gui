@@ -2,12 +2,14 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::unison::{UnisonManager, generate_unison};
+use crate::envelope::Envelope;
 
 /// サイン波を生成してスピーカーから再生する関数
 pub fn play_sine_wave(
     initial_freq: f32,
     current_freq: Arc<Mutex<f32>>,
     unison_manager: Arc<UnisonManager>,
+    envelope: Arc<Mutex<Envelope>>,
 ) -> cpal::Stream {
     // デフォルトのホストを取得
     let host = cpal::default_host();
@@ -17,9 +19,16 @@ pub fn play_sine_wave(
     let config = device.default_output_config().expect("Failed to get default output config");
     println!("Starting audio stream at {}Hz", config.sample_rate().0);
 
+    // サンプルレートを取得
+    let sample_rate = config.sample_rate().0 as f32;
+
+    // エンベロープのサンプルレートを設定
+    if let Ok(mut env) = envelope.lock() {
+        env.set_sample_rate(sample_rate);
+    }
+
     // 時間変数（サンプル数として保持）
     let mut t = 0u64;
-    let sample_rate = config.sample_rate().0 as f32;
 
     // オーディオストリームを構築
     let stream = match config.sample_format() {
@@ -48,18 +57,33 @@ pub fn play_sine_wave(
                     return;
                 };
 
+                // エンベロープを更新
+                if let Ok(mut env) = envelope.lock() {
+                    env.update(1.0 / sample_rate);
+                }
+
                 // 各サンプルを生成
                 for sample in data.iter_mut() {
                     // 時間を秒単位に変換（浮動小数点の精度を考慮）
                     let t_seconds = (t as f32) / sample_rate;
                     
                     // Unison音声を生成
-                    *sample = generate_unison(
+                    let waveform_value = generate_unison(
                         freq,
                         unison_settings,
                         t_seconds,
                         sample_rate,
                     );
+
+                    // エンベロープの値を取得して適用
+                    let envelope_value = if let Ok(env) = envelope.lock() {
+                        env.get_value()
+                    } else {
+                        0.0
+                    };
+
+                    // 波形とエンベロープを掛け合わせる
+                    *sample = waveform_value * envelope_value;
                     
                     // 時間を進める（サンプル数として）
                     t = t.wrapping_add(1);

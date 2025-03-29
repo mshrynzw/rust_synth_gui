@@ -13,6 +13,9 @@ egui = "0.24.1"
 # MIDI関連
 midir = "0.9"
 
+# シリアライズ関連
+serde = { version = "1.0", features = ["derive"] }
+
 # Windows専用の winapi features をここで明示的に指定
 [target.'cfg(windows)'.dependencies.winapi]
 version = "0.3.9"
