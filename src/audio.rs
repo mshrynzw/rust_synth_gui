@@ -4,70 +4,68 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::unison::{UnisonManager, generate_unison};
 
 /// サイン波を生成してスピーカーから再生する関数
-pub fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>, unison_manager: Arc<UnisonManager>) -> cpal::Stream {
-    // デフォルトのオーディオホストを取得（WindowsならWASAPIなど）
+pub fn play_sine_wave(
+    initial_freq: f32,
+    current_freq: Arc<Mutex<f32>>,
+    unison_manager: Arc<UnisonManager>,
+) -> cpal::Stream {
+    // デフォルトのホストを取得
     let host = cpal::default_host();
+    // デフォルトの出力デバイスを取得
+    let device = host.default_output_device().expect("No output device available");
+    // デフォルトの出力フォーマットを取得
+    let config = device.default_output_config().expect("Failed to get default output config");
+    println!("Starting audio stream at {}Hz", config.sample_rate().0);
 
-    // 出力デバイス（例：スピーカー）を取得
-    let device = host.default_output_device().expect("No output device found");
+    // 時間変数（サンプル数として保持）
+    let mut t = 0u64;
 
-    // 出力デバイスの設定（例：44100Hz, f32型など）を取得
-    let config = device.default_output_config().unwrap();
-    let sample_rate = config.sample_rate().0 as f32;
-
-    println!("Audio stream started with sample rate: {}Hz", sample_rate);
-
-    // 音の時間位置を追跡するための変数を作成（スレッド安全）
-    let t = Arc::new(Mutex::new(0.0_f32));
-    let t_clone = Arc::clone(&t);
-
-    // current_freqのクローンを作成
-    let current_freq_clone = Arc::clone(&current_freq);
-
-    // Unison設定のクローンを作成
-    let unison_settings = unison_manager.get_settings();
-
-    // build_output_stream にクロージャを直接渡すことでライフタイムエラーを回避
-    let stream = device
-        .build_output_stream(
-            &config.into(), // 出力設定（サンプルレートなど）
-            move |data: &mut [f32], _info| {
-                // t をロックして使う（他スレッドと競合しないように）
-                let mut t = t_clone.lock().unwrap();
+    // オーディオストリームを構築
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => device.build_output_stream(
+            &config.into(),
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 // 現在の周波数を取得
-                let freq = if let Ok(freq_lock) = current_freq_clone.lock() {
+                let freq = if let Ok(freq_lock) = current_freq.try_lock() {
                     *freq_lock
                 } else {
-                    0.0 // デフォルト周波数（音なし）
+                    initial_freq
                 };
 
                 // Unison設定を取得
-                let settings = if let Ok(settings) = unison_settings.lock() {
+                let unison_settings = if let Ok(settings) = unison_manager.get_settings().try_lock() {
                     *settings
                 } else {
-                    Default::default()
+                    return;
                 };
 
-                // 出力バッファにサンプルを書き込む
+                // 各サンプルを生成
                 for sample in data.iter_mut() {
-                    if freq > 0.0 {
-                        // Unison音声を生成
-                        let value = generate_unison(freq, settings, *t, sample_rate);
-                        *sample = value * 0.2; // 0.2 = 音量
-                    } else {
-                        *sample = 0.0; // 音なし
-                    }
-                    *t += 1.0 / sample_rate; // 時間を進める
+                    // 時間を秒単位に変換（オーバーフロー対策）
+                    let t_seconds = (t as f32) / config.sample_rate().0 as f32;
+                    
+                    // Unison音声を生成
+                    *sample = generate_unison(
+                        freq,
+                        unison_settings,
+                        t_seconds,
+                        config.sample_rate().0 as f32,
+                    );
+                    
+                    t = t.wrapping_add(1);
                 }
             },
             move |err| {
-                // エラーハンドラ：ストリームエラーを出力
-                eprintln!("Stream error: {}", err);
+                eprintln!("Error in output stream: {}", err);
             },
-            None, // 出力レイアウトの指定（Noneでデフォルト）
-        )
-        .unwrap(); // エラーハンドリング（失敗したら panic）
+            None,
+        ),
+        _ => panic!("Unsupported sample format"),
+    }
+    .expect("Failed to build output stream");
 
-    stream.play().unwrap(); // ストリームの再生開始
+    // ストリームを開始
+    stream.play().expect("Failed to start output stream");
+
     stream
 } 
