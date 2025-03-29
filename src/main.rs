@@ -3,6 +3,7 @@ mod audio;
 mod midi;
 mod unison;
 mod oscillator;
+mod envelope;
 
 // 標準ライブラリから、円周率（PI）を使用
 use std::f32::consts::PI;
@@ -26,7 +27,7 @@ fn main() -> Result<(), eframe::Error> {
     // ウィンドウ設定を定義（タイトルとウィンドウサイズ）
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([300.0, 200.0])  // ウィンドウの初期サイズ
+            .with_inner_size([500.0, 500.0])  // ウィンドウの初期サイズ
             .with_title("Rust Synth"),        // ウィンドウタイトル
         ..Default::default()
     };

@@ -1,7 +1,5 @@
-use std::f32::consts::PI;
-
-/// オシレータの波形タイプを表す列挙型
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// 波形の種類を表す列挙型
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Waveform {
     Sine,    // サイン波
     Triangle, // 三角波
@@ -16,37 +14,29 @@ impl Default for Waveform {
 }
 
 /// 指定された波形を生成する関数
-pub fn generate_waveform(waveform: Waveform, frequency: f32, t: f32, sample_rate: f32) -> f32 {
-    // 時間を周期で割った余りを使用（浮動小数点の精度を考慮）
-    let period = sample_rate / frequency;
-    let t = t * sample_rate;
-    let t = t % period;
+pub fn generate_waveform(waveform: Waveform, t: f32, freq: f32) -> f32 {
+    let phase = (t * freq * 2.0 * std::f32::consts::PI) % (2.0 * std::f32::consts::PI);
 
     match waveform {
-        Waveform::Sine => {
-            // サイン波の計算
-            (2.0 * PI * t / period).sin()
-        }
+        Waveform::Sine => phase.sin(),
         Waveform::Triangle => {
-            // 三角波の計算
-            let half_period = period * 0.5;
-            if t < half_period {
-                (t / half_period) * 2.0 - 1.0
+            let normalized_phase = phase / (2.0 * std::f32::consts::PI);
+            if normalized_phase < 0.5 {
+                4.0 * normalized_phase - 1.0
             } else {
-                -((t - half_period) / half_period) * 2.0 + 1.0
+                3.0 - 4.0 * normalized_phase
             }
         }
         Waveform::Square => {
-            // 矩形波の計算
-            if t < period * 0.5 {
+            if phase < std::f32::consts::PI {
                 1.0
             } else {
                 -1.0
             }
         }
         Waveform::Sawtooth => {
-            // ノコギリ波の計算
-            (t / period) * 2.0 - 1.0
+            let normalized_phase = phase / (2.0 * std::f32::consts::PI);
+            2.0 * normalized_phase - 1.0
         }
     }
 }

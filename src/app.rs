@@ -7,6 +7,8 @@ use crate::audio::play_sine_wave;
 use crate::midi::setup_midi_callback;
 use crate::unison::UnisonManager;
 use crate::oscillator::Waveform;
+use crate::envelope::EnvelopeManager;
+use crate::unison::UnisonSettings;
 
 /// アプリの状態を表す構造体
 pub struct SynthApp {
@@ -19,6 +21,8 @@ pub struct SynthApp {
     midi_ports: Vec<String>, // 利用可能なMIDIポートのリスト
     selected_port: usize, // 選択されたMIDIポートのインデックス
     unison_manager: Arc<UnisonManager>, // Unison設定の管理
+    envelope_manager: Arc<Mutex<EnvelopeManager>>, // エンベロープの管理
+    last_frame_time: f32, // 最後のフレーム時間
 }
 
 /// アプリのデフォルト初期値を定義（440Hz・再生停止中）
@@ -34,6 +38,8 @@ impl Default for SynthApp {
             midi_ports: Vec::new(), // MIDIポートのリストは空
             selected_port: 0,    // デフォルトは最初のポート
             unison_manager: Arc::new(UnisonManager::new()), // Unison設定の初期化
+            envelope_manager: Arc::new(Mutex::new(EnvelopeManager::new(44100.0))), // 1つのエンベロープを初期化（サンプルレート44.1kHz）
+            last_frame_time: 0.0, // 初期時間は0
         }
     }
 }
@@ -41,6 +47,10 @@ impl Default for SynthApp {
 /// eframe::App の実装（毎フレーム呼ばれる update 関数など）
 impl App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 現在の時間を取得（秒単位）
+        let current_time = ctx.input(|i| i.time) as f32;
+        self.last_frame_time = current_time;
+
         // MIDIから設定された周波数を取得
         if let Ok(midi_freq) = self.midi_freq.try_lock() {
             self.freq = *midi_freq;
@@ -97,13 +107,22 @@ impl App for SynthApp {
                         
                         // MIDIコールバックをセットアップ
                         let current_freq = Arc::clone(&self.current_freq);
-                        if let Ok(conn) = setup_midi_callback(midi_in, port, current_freq) {
+                        let envelope_manager = Arc::clone(&self.envelope_manager);
+                        
+                        if let Ok(conn) = setup_midi_callback(midi_in, port, current_freq, envelope_manager) {
                             println!("MIDI connection established successfully");
                             self.midi_connection = Some(conn);
                             
+                            // サンプルレートを設定
+                            if let Ok(mut env_manager) = self.envelope_manager.lock() {
+                                env_manager.set_sample_rate(44100.0);
+                            }
+                            
                             // オーディオストリームを開始（初期周波数は0で音なし）
-                            let stream = play_sine_wave(0.0, Arc::clone(&self.current_freq), Arc::clone(&self.unison_manager));
-                            self.stream_handle = Some(stream);
+                            if self.stream_handle.is_none() {
+                                let stream = play_sine_wave(0.0, Arc::clone(&self.current_freq), Arc::clone(&self.unison_manager), Arc::clone(&self.envelope_manager));
+                                self.stream_handle = Some(stream);
+                            }
                         } else {
                             println!("Failed to establish MIDI connection");
                         }
@@ -136,23 +155,30 @@ impl App for SynthApp {
             ui.separator();
             ui.heading("Oscillator Settings");
             
-            // 波形選択コンボボックス
-            let mut current_waveform = if let Ok(settings) = self.unison_manager.get_settings().lock() {
+            // Unison設定を取得
+            let mut unison_settings = if let Ok(settings) = self.unison_manager.get_settings().lock() {
+                *settings
+            } else {
+                UnisonSettings::default()
+            };
+            
+            // 波形選択のラジオボタン
+            ui.horizontal(|ui| {
+                ui.label("Waveform:");
+                ui.radio_value(&mut unison_settings.waveform, Waveform::Sine, "Sine");
+                ui.radio_value(&mut unison_settings.waveform, Waveform::Triangle, "Triangle");
+                ui.radio_value(&mut unison_settings.waveform, Waveform::Square, "Square");
+                ui.radio_value(&mut unison_settings.waveform, Waveform::Sawtooth, "Sawtooth");
+            });
+
+            // Unison設定を更新
+            if unison_settings.waveform != if let Ok(settings) = self.unison_manager.get_settings().lock() {
                 settings.waveform
             } else {
                 Waveform::Sine
-            };
-            
-            egui::ComboBox::from_label("Waveform")
-                .selected_text(format!("{:?}", current_waveform))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut current_waveform, Waveform::Sine, "Sine");
-                    ui.selectable_value(&mut current_waveform, Waveform::Triangle, "Triangle");
-                    ui.selectable_value(&mut current_waveform, Waveform::Square, "Square");
-                    ui.selectable_value(&mut current_waveform, Waveform::Sawtooth, "Sawtooth");
-                });
-            
-            self.unison_manager.set_waveform(current_waveform);
+            } {
+                self.unison_manager.set_waveform(unison_settings.waveform);
+            }
 
             // Unison設定UI
             ui.separator();
@@ -175,6 +201,38 @@ impl App for SynthApp {
             };
             ui.add(egui::Slider::new(&mut detune, 0.0..=100.0).text("Detune (cents)"));
             self.unison_manager.set_detune(detune);
+
+            // ADSRエンベロープ設定UI
+            ui.separator();
+            ui.heading("ADSR Envelope");
+            
+            if let Ok(mut env_manager) = self.envelope_manager.lock() {
+                // エンベロープのパラメータを取得
+                let mut params = env_manager.get_params();
+
+                // アタック時間のスライダー（0-4秒）
+                ui.add(egui::Slider::new(&mut params.attack, 0.0..=4.0)
+                    .step_by(0.1)
+                    .text("Attack (s)"));
+                
+                // ディケイ時間のスライダー（0-4秒）
+                ui.add(egui::Slider::new(&mut params.decay, 0.0..=4.0)
+                    .step_by(0.1)
+                    .text("Decay (s)"));
+                
+                // サステインレベルのスライダー（0-1）
+                ui.add(egui::Slider::new(&mut params.sustain, 0.0..=1.0)
+                    .step_by(0.1)
+                    .text("Sustain"));
+                
+                // リリース時間のスライダー（0-4秒）
+                ui.add(egui::Slider::new(&mut params.release, 0.0..=4.0)
+                    .step_by(0.1)
+                    .text("Release (s)"));
+
+                // パラメータを更新
+                env_manager.set_params(params);
+            }
 
             // 周波数スライダー（100Hz〜1000Hz）を追加
             ui.separator();
