@@ -28,7 +28,7 @@ pub fn generate_unison(
     base_freq: f32,
     settings: UnisonSettings,
     t: f32,
-    _sample_rate: f32,
+    sample_rate: f32,
 ) -> f32 {
     if settings.voices == 0 || settings.voices > 8 {
         return 0.0;
@@ -39,7 +39,7 @@ pub fn generate_unison(
     
     // ボイス数が1の場合は通常の波形を生成
     if settings.voices == 1 {
-        return generate_waveform(settings.waveform, base_freq, t);
+        return generate_waveform(settings.waveform, base_freq, t, sample_rate);
     }
     
     // 各ボイスを生成
@@ -55,7 +55,7 @@ pub fn generate_unison(
         let freq = base_freq * detune_ratio;
         
         // 波形を生成
-        let value = generate_waveform(settings.waveform, freq, t);
+        let value = generate_waveform(settings.waveform, freq, t, sample_rate);
         
         // 音量を調整（ボイス数で割って音量を一定に保つ）
         sum += value / voice_count;
