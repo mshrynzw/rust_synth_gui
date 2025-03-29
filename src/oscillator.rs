@@ -16,37 +16,32 @@ impl Default for Waveform {
 }
 
 /// 指定された波形を生成する関数
-pub fn generate_waveform(waveform: Waveform, frequency: f32, t: f32, sample_rate: f32) -> f32 {
-    // 時間を周期で割った余りを使用（浮動小数点の精度を考慮）
-    let period = sample_rate / frequency;
-    let t = t * sample_rate;
-    let t = t % period;
+pub fn generate_waveform(waveform: Waveform, frequency: f32, t: f32, _sample_rate: f32) -> f32 {
+    // 位相を計算（0.0から1.0の範囲）
+    // 時間を1秒で割った余りを使用して、位相の蓄積を防ぐ
+    let phase = (t % 1.0) * frequency;
 
     match waveform {
         Waveform::Sine => {
             // サイン波の計算
-            (2.0 * PI * t / period).sin()
+            (2.0 * PI * phase).sin()
         }
         Waveform::Triangle => {
-            // 三角波の計算
-            let half_period = period * 0.5;
-            if t < half_period {
-                (t / half_period) * 2.0 - 1.0
-            } else {
-                -((t - half_period) / half_period) * 2.0 + 1.0
-            }
+            // 三角波の計算（より滑らかな実装）
+            let x = phase * 2.0 - 1.0;
+            let smoothed = (x.abs() * 2.0 - 1.0).signum();
+            smoothed * 0.8 // 振幅を少し抑える
         }
         Waveform::Square => {
-            // 矩形波の計算
-            if t < period * 0.5 {
-                1.0
-            } else {
-                -1.0
-            }
+            // 矩形波の計算（より滑らかな実装）
+            let smoothed = phase.sin().signum();
+            smoothed * 0.8 // 振幅を少し抑える
         }
         Waveform::Sawtooth => {
-            // ノコギリ波の計算
-            (t / period) * 2.0 - 1.0
+            // ノコギリ波の計算（より滑らかな実装）
+            let x = phase * 2.0 - 1.0;
+            let smoothed = x - (x.abs() * 2.0 - 1.0).signum() * 0.5;
+            smoothed * 0.8 // 振幅を少し抑える
         }
     }
 }
