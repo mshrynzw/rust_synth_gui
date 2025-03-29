@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 
-use crate::oscillator::{Waveform, generate_waveform};
+use crate::oscillator::{Waveform, generate_waveform, OscillatorSettings};
 
 /// Unisonの設定を表す構造体
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
 pub struct UnisonSettings {
     /// Unisonの数（1-8）
-    pub voices: u8,
+    pub voices: usize,
     /// デチューン量（0から100セント）
     pub detune: f32,
     /// 波形タイプ
@@ -16,52 +16,39 @@ pub struct UnisonSettings {
 impl Default for UnisonSettings {
     fn default() -> Self {
         Self {
-            voices: 1,
-            detune: 0.0,
-            waveform: Waveform::Sine,
+            voices: 3,
+            detune: 0.1,
+            waveform: Waveform::default(),
         }
     }
 }
 
 /// Unison音声を生成する関数
 pub fn generate_unison(
+    settings: &UnisonSettings,
     base_freq: f32,
-    settings: UnisonSettings,
     t: f32,
     sample_rate: f32,
+    osc_settings: &OscillatorSettings,
 ) -> f32 {
-    if settings.voices == 0 || settings.voices > 8 {
-        return 0.0;
+    if settings.voices == 1 {
+        // ユニゾンなしの場合は単純に波形を生成
+        return generate_waveform(settings.waveform, base_freq, t, sample_rate, osc_settings);
     }
 
     let mut sum = 0.0;
-    let voice_count = settings.voices as f32;
-    
-    // ボイス数が1の場合は通常の波形を生成
-    if settings.voices == 1 {
-        return generate_waveform(settings.waveform, base_freq, t, sample_rate);
-    }
-    
-    // 各ボイスを生成
+    let detune_step = settings.detune / (settings.voices - 1) as f32;
+
+    // 各ボイスの波形を生成して合成
     for i in 0..settings.voices {
-        // デチューン量を計算（-detuneから+detuneの範囲で均等に分散）
-        let detune_step = (settings.detune * 2.0) / (voice_count - 1.0);
-        let detune_amount = -settings.detune + (detune_step * i as f32);
-        
-        // セントから周波数比に変換
-        let detune_ratio = 2.0f32.powf(detune_amount / 1200.0);
-        
-        // このボイスの周波数を計算
-        let freq = base_freq * detune_ratio;
-        
-        // 波形を生成
-        let value = generate_waveform(settings.waveform, freq, t, sample_rate);
-        
-        // 音量を調整（ボイス数で割って音量を一定に保つ）
-        sum += value / voice_count;
+        let detune_amount = detune_step * i as f32 - settings.detune / 2.0;
+        let freq = base_freq * (1.0 + detune_amount);
+        let value = generate_waveform(settings.waveform, freq, t, sample_rate, osc_settings);
+        sum += value;
     }
-    
-    sum
+
+    // 平均を取って出力
+    sum / settings.voices as f32
 }
 
 /// Unisonの設定を管理する構造体
@@ -80,7 +67,7 @@ impl UnisonManager {
         Arc::clone(&self.settings)
     }
 
-    pub fn set_voices(&self, voices: u8) {
+    pub fn set_voices(&self, voices: usize) {
         if let Ok(mut settings) = self.settings.lock() {
             settings.voices = voices.clamp(1, 8);
         }

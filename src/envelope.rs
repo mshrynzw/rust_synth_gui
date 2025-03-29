@@ -41,6 +41,19 @@ pub struct Envelope {
     release_start_value: f32,  // リリース開始時の値を保存
 }
 
+impl Default for Envelope {
+    fn default() -> Self {
+        Self {
+            params: EnvelopeParams::default(),
+            state: EnvelopeState::Idle,
+            value: 0.0,
+            time: 0.0,
+            sample_rate: 44100.0,
+            release_start_value: 0.0,
+        }
+    }
+}
+
 impl Envelope {
     pub fn new(params: EnvelopeParams, sample_rate: f32) -> Self {
         Self {
@@ -131,4 +144,4 @@ impl Envelope {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
-} 
+}

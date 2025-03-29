@@ -6,7 +6,7 @@ use midir::MidiInputConnection;
 use crate::audio::play_sine_wave;
 use crate::midi::setup_midi_callback;
 use crate::unison::UnisonManager;
-use crate::oscillator::Waveform;
+use crate::oscillator::{Waveform, OscillatorSettings};
 use crate::envelope::{Envelope, EnvelopeParams};
 
 /// アプリの状態を表す構造体
@@ -21,6 +21,7 @@ pub struct SynthApp {
     selected_port: usize, // 選択されたMIDIポートのインデックス
     unison_manager: Arc<UnisonManager>, // Unison設定の管理
     envelope: Arc<Mutex<Envelope>>, // ADSRエンベロープ
+    oscillator_settings: OscillatorSettings, // オシレータ設定
 }
 
 /// アプリのデフォルト初期値を定義（440Hz・再生停止中）
@@ -37,6 +38,7 @@ impl Default for SynthApp {
             selected_port: 0,    // デフォルトは最初のポート
             unison_manager: Arc::new(UnisonManager::new()), // Unison設定の初期化
             envelope: Arc::new(Mutex::new(Envelope::new(EnvelopeParams::default(), 44100.0))), // エンベロープの初期化
+            oscillator_settings: OscillatorSettings::default(), // オシレータ設定の初期化
         }
     }
 }
@@ -111,6 +113,7 @@ impl App for SynthApp {
                                 Arc::clone(&self.current_freq),
                                 Arc::clone(&self.unison_manager),
                                 Arc::clone(&self.envelope),
+                                &self.oscillator_settings,
                             );
                             self.stream_handle = Some(stream);
                         } else {
@@ -221,6 +224,47 @@ impl App for SynthApp {
 
             // 現在の周波数をラベルとして表示
             ui.label(format!("Current frequency: {:.1} Hz", self.freq));
+
+            // 音質調整セクション
+            ui.separator();
+            ui.heading("Sound Quality Settings");
+            
+            // フィルターアルファ（ローパスフィルターの強度）
+            ui.horizontal(|ui| {
+                ui.label("Filter Alpha:");
+                ui.add(
+                    egui::Slider::new(&mut self.oscillator_settings.filter_alpha, 0.0..=1.0)
+                        .step_by(0.01)
+                        .show_value(true),
+                );
+            });
+            ui.label("Controls the strength of the low-pass filter. Higher values = more filtering.");
+
+            // スムージング強度
+            ui.horizontal(|ui| {
+                ui.label("Smoothing Strength:");
+                ui.add(
+                    egui::Slider::new(&mut self.oscillator_settings.smoothing_strength, 0.0..=0.5)
+                        .step_by(0.01)
+                        .show_value(true),
+                );
+            });
+            ui.label("Controls the amount of waveform smoothing. Higher values = smoother sound.");
+
+            // オーバーサンプリング比率
+            ui.horizontal(|ui| {
+                ui.label("Oversample Ratio:");
+                ui.add(
+                    egui::Slider::new(&mut self.oscillator_settings.oversample_ratio, 1..=16)
+                        .step_by(1.0)
+                        .show_value(true),
+                );
+            });
+            ui.label("Controls the quality of waveform generation. Higher values = less aliasing.");
+
+            if ui.button("Reset to Default").clicked() {
+                self.oscillator_settings = OscillatorSettings::default();
+            }
         });
     }
 

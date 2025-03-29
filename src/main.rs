@@ -5,14 +5,12 @@ mod unison;
 mod oscillator;
 mod envelope;
 
-// 標準ライブラリから、円周率（PI）を使用
-use std::f32::consts::PI;
+use crate::oscillator::{Waveform, OscillatorSettings};
+use crate::unison::UnisonManager;
+use crate::envelope::Envelope;
 
 // スレッド間で共有・同期するために、Arc（参照カウント付きポインタ）と Mutex（排他ロック）を使用
 use std::sync::{Arc, Mutex};
-
-// オーディオ出力のために、cpalクレートのトレイトをインポート
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 // GUIアプリの構築のために、eframe（eguiベース）をインポート
 use eframe::{egui, App};
@@ -51,6 +49,8 @@ struct SynthApp {
     current_freq: Arc<Mutex<f32>>, // 現在再生中の周波数（スレッド間共有）
     midi_ports: Vec<String>, // 利用可能なMIDIポートのリスト
     selected_port: usize, // 選択されたMIDIポートのインデックス
+    oscillator_settings: OscillatorSettings,
+    unison_manager: Arc<UnisonManager>, // Unison設定を管理
 }
 
 /// アプリのデフォルト初期値を定義（440Hz・再生停止中）
@@ -66,6 +66,8 @@ impl Default for SynthApp {
             current_freq: Arc::new(Mutex::new(440.0)), // 現在の周波数の初期値
             midi_ports: Vec::new(), // MIDIポートのリストは空
             selected_port: 0,    // デフォルトは最初のポート
+            oscillator_settings: OscillatorSettings::default(),
+            unison_manager: Arc::new(UnisonManager::new()), // Unison設定の初期化
         }
     }
 }
@@ -200,6 +202,107 @@ impl App for SynthApp {
                 *current_freq = self.freq;
             }
 
+            // 現在の周波数をラベルとして表示
+            ui.label(format!("Current frequency: {:.1} Hz", self.freq));
+
+            // 音質調整セクション
+            ui.collapsing("Sound Quality Settings", |ui| {
+                // フィルターアルファ（ローパスフィルターの強度）
+                ui.horizontal(|ui| {
+                    ui.label("Filter Alpha:");
+                    ui.add(
+                        egui::Slider::new(&mut self.oscillator_settings.filter_alpha, 0.0..=1.0)
+                            .step_by(0.01)
+                            .show_value(true),
+                    );
+                });
+                ui.label("Controls the strength of the low-pass filter. Higher values = more filtering.");
+
+                // スムージング強度
+                ui.horizontal(|ui| {
+                    ui.label("Smoothing Strength:");
+                    ui.add(
+                        egui::Slider::new(&mut self.oscillator_settings.smoothing_strength, 0.0..=0.5)
+                            .step_by(0.01)
+                            .show_value(true),
+                    );
+                });
+                ui.label("Controls the amount of waveform smoothing. Higher values = smoother sound.");
+
+                // オーバーサンプリング比率
+                ui.horizontal(|ui| {
+                    ui.label("Oversample Ratio:");
+                    ui.add(
+                        egui::Slider::new(&mut self.oscillator_settings.oversample_ratio, 1..=16)
+                            .step_by(1.0)
+                            .show_value(true),
+                    );
+                });
+                ui.label("Controls the quality of waveform generation. Higher values = less aliasing.");
+
+                if ui.button("Reset to Default").clicked() {
+                    self.oscillator_settings = OscillatorSettings::default();
+                }
+            });
+
+            // Unison設定のセクション
+            ui.collapsing("Unison Settings", |ui| {
+                // ボイス数のスライダー
+                ui.horizontal(|ui| {
+                    ui.label("Voices:");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.unison_manager.get_settings().lock().unwrap().voices,
+                            1..=8,
+                        )
+                        .step_by(1.0)
+                        .show_value(true),
+                    );
+                });
+
+                // デチューン量のスライダー
+                ui.horizontal(|ui| {
+                    ui.label("Detune (cents):");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.unison_manager.get_settings().lock().unwrap().detune,
+                            0.0..=100.0,
+                        )
+                        .step_by(0.1)
+                        .show_value(true),
+                    );
+                });
+
+                // 波形選択
+                ui.horizontal(|ui| {
+                    ui.label("Waveform:");
+                    egui::ComboBox::from_label("")
+                        .selected_text(format!("{:?}", self.unison_manager.get_settings().lock().unwrap().waveform))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.unison_manager.get_settings().lock().unwrap().waveform,
+                                Waveform::Sine,
+                                "Sine",
+                            );
+                            ui.selectable_value(
+                                &mut self.unison_manager.get_settings().lock().unwrap().waveform,
+                                Waveform::Triangle,
+                                "Triangle",
+                            );
+                            ui.selectable_value(
+                                &mut self.unison_manager.get_settings().lock().unwrap().waveform,
+                                Waveform::Square,
+                                "Square",
+                            );
+                            ui.selectable_value(
+                                &mut self.unison_manager.get_settings().lock().unwrap().waveform,
+                                Waveform::Sawtooth,
+                                "Sawtooth",
+                            );
+                        });
+                });
+            });
+
             // 再生・停止ボタンを横並びで表示
             ui.horizontal(|ui| {
                 // ▶ 再生ボタンが押された & 現在停止中なら
@@ -207,8 +310,14 @@ impl App for SynthApp {
                     self.playing = true; // 再生状態に変更
                     let freq = self.freq; // 現在の周波数をコピー
 
-                    // サイン波を再生してストリームを保持（current_freqを渡す）
-                    let stream = play_sine_wave(freq, Arc::clone(&self.current_freq));
+                    // サイン波を再生してストリームを保持
+                    let stream = audio::play_sine_wave(
+                        freq,
+                        Arc::clone(&self.current_freq),
+                        Arc::clone(&self.unison_manager),
+                        Arc::new(Mutex::new(Envelope::default())),
+                        &self.oscillator_settings,
+                    );
                     self.stream_handle = Some(stream);
                 }
 
@@ -218,64 +327,6 @@ impl App for SynthApp {
                     self.stream_handle = None; // ストリームを破棄（再生停止）
                 }
             });
-
-            // 現在の周波数をラベルとして表示
-            ui.label(format!("Current frequency: {:.1} Hz", self.freq));
         });
     }
-}
-
-/// サイン波を生成してスピーカーから再生する関数
-fn play_sine_wave(_freq: f32, current_freq: Arc<Mutex<f32>>) -> cpal::Stream {
-    // デフォルトのオーディオホストを取得（WindowsならWASAPIなど）
-    let host = cpal::default_host();
-
-    // 出力デバイス（例：スピーカー）を取得
-    let device = host.default_output_device().expect("No output device found");
-
-    // 出力デバイスの設定（例：44100Hz, f32型など）を取得
-    let config = device.default_output_config().unwrap();
-    let sample_rate = config.sample_rate().0 as f32;
-
-    println!("Audio stream started with sample rate: {}Hz", sample_rate);
-
-    // 音の時間位置を追跡するための変数を作成（スレッド安全）
-    let t = Arc::new(Mutex::new(0.0_f32));
-    let t_clone = Arc::clone(&t);
-
-    // current_freqのクローンを作成
-    let current_freq_clone = Arc::clone(&current_freq);
-
-    // build_output_stream にクロージャを直接渡すことでライフタイムエラーを回避
-    let stream = device
-        .build_output_stream(
-            &config.into(), // 出力設定（サンプルレートなど）
-            move |data: &mut [f32], _info| {
-                // t をロックして使う（他スレッドと競合しないように）
-                let mut t = t_clone.lock().unwrap();
-                // 現在の周波数を取得
-                let freq = if let Ok(freq_lock) = current_freq_clone.lock() {
-                    *freq_lock
-                } else {
-                    440.0 // デフォルト周波数
-                };
-
-                // 出力バッファにサンプルを書き込む
-                for sample in data.iter_mut() {
-                    // サイン波の式 sin(2πft)
-                    let value = (2.0 * PI * freq * *t).sin() * 0.2; // 0.2 = 音量
-                    *sample = value; // バッファに書き込む
-                    *t += 1.0 / sample_rate; // 時間を進める
-                }
-            },
-            move |err| {
-                // エラーハンドラ：ストリームエラーを出力
-                eprintln!("Stream error: {}", err);
-            },
-            None, // 出力レイアウトの指定（Noneでデフォルト）
-        )
-        .unwrap(); // エラーハンドリング（失敗したら panic）
-
-    stream.play().unwrap(); // ストリームの再生開始
-    stream
 }
