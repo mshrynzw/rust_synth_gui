@@ -21,6 +21,7 @@ pub fn play_sine_wave(
     let mut t = 0u64;
 
     // オーディオストリームを構築
+    let sample_rate = config.sample_rate().0;
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_output_stream(
             &config.into(),
@@ -42,14 +43,14 @@ pub fn play_sine_wave(
                 // 各サンプルを生成
                 for sample in data.iter_mut() {
                     // 時間を秒単位に変換（オーバーフロー対策）
-                    let t_seconds = (t as f32) / config.sample_rate().0 as f32;
+                    let t_seconds = (t as f32) / sample_rate as f32;
                     
                     // Unison音声を生成
                     *sample = generate_unison(
                         freq,
                         unison_settings,
                         t_seconds,
-                        config.sample_rate().0 as f32,
+                        sample_rate as f32,
                     );
                     
                     t = t.wrapping_add(1);

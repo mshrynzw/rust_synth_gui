@@ -50,4 +50,4 @@ pub fn generate_waveform(waveform: Waveform, frequency: f32, t: f32) -> f32 {
             (t / period) * 2.0 - 1.0
         }
     }
-} 
+}
